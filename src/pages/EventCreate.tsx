@@ -117,10 +117,10 @@ const EventCreate: React.FC = () => {
 			if (formData.bannerImage) {
 				const cloudinaryFormData = new FormData();
 				cloudinaryFormData.append("file", formData.bannerImage);
-				cloudinaryFormData.append("upload_preset", "pixwap"); // You'll need to set this
+				cloudinaryFormData.append("upload_preset", "pixwap");
 
 				const response = await fetch(
-					`https://api.cloudinary.com/v1_1/dzwzpjlw8/image/upload`, // You'll need to set this
+					`https://api.cloudinary.com/v1_1/dzwzpjlw8/image/upload`,
 					{
 						method: "POST",
 						body: cloudinaryFormData,

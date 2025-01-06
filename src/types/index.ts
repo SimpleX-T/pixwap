@@ -19,7 +19,7 @@ export interface Event {
 	downloads: DownloadRecord[];
 }
 
-interface DownloadRecord {
+export interface DownloadRecord {
 	user_email: string;
 	download_date: Date;
 }

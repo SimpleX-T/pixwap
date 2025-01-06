@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { useFirebase } from "../contexts/FirebaseContext";
-import { db, storage } from "../config/firebase";
-import {
-	doc,
-	getDoc,
-	updateDoc,
-	arrayUnion,
-	arrayRemove,
-} from "firebase/firestore";
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { db } from "../config/firebase";
+import { arrayUnion, doc, getDoc, updateDoc } from "firebase/firestore";
+
 import { Event, Image } from "../types";
-import { Loader2, Upload, Trash2, AlertCircle, ImageIcon } from "lucide-react";
+import {
+	Upload,
+	Trash2,
+	AlertCircle,
+	ImageIcon,
+	DownloadCloud,
+} from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +29,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { DownloadRecord } from "@/types";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const ALLOWED_FILE_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -73,6 +74,7 @@ const EventView = () => {
 	const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
 		if (!e.target.files) return;
 		const files = Array.from(e.target.files);
+		setError("");
 
 		if (selectedImages.length + files.length > MAX_IMAGES) {
 			setError(`You can only upload up to ${MAX_IMAGES} images`);
@@ -105,66 +107,52 @@ const EventView = () => {
 		setIsUploading(true);
 		setError(null);
 
-		let uploadedCount = 0;
-		const totalFiles = selectedImages.length;
+		const totalImages: Omit<Image, "id">[] = [];
 
-		for (const file of selectedImages) {
+		for (const [index, file] of selectedImages.entries()) {
 			try {
-				const storageRef = ref(
-					storage,
-					`events/${id}/${file.name}-${Date.now()}`
-				);
-				const uploadTask = uploadBytesResumable(storageRef, file);
+				const imageFormData = new FormData();
+				imageFormData.append("file", file);
+				imageFormData.append("upload_preset", "pixwap");
 
-				await new Promise((resolve, reject) => {
-					uploadTask.on(
-						"state_changed",
-						(snapshot) => {
-							const fileProgress =
-								snapshot.bytesTransferred / snapshot.totalBytes;
-							const overallProgress =
-								((uploadedCount + fileProgress) / totalFiles) *
-								100;
-							setUploadProgress(overallProgress);
-						},
-						reject,
-						resolve
-					);
-				});
-
-				const downloadURL = await getDownloadURL(
-					uploadTask.snapshot.ref
+				const res = await fetch(
+					`https://api.cloudinary.com/v1_1/dzwzpjlw8/image/upload`,
+					{
+						method: "POST",
+						body: imageFormData,
+					}
 				);
-				const newImage: Image = {
-					id: `${Date.now()}-${uploadedCount}`,
-					url: downloadURL,
-					created_at: new Date(),
+				if (!res.ok) {
+					throw new Error(`Failed to upload image ${file.name}`);
+				}
+				const data = await res.json();
+				const imageData = {
+					url: data.secure_url || "",
 					event_id: id,
+					created_at: new Date(),
 				};
-
-				await updateDoc(doc(db, "events", id), {
-					images: arrayUnion(newImage),
-				});
-
-				setEvent((prev) =>
-					prev
-						? {
-								...prev,
-								images: [...prev.images, newImage],
-						  }
-						: null
-				);
-
-				uploadedCount++;
+				totalImages.push(imageData);
+				removeImage(index);
+				setUploadProgress((prev) => prev + 1);
 			} catch (err) {
 				setError(`Failed to upload ${file.name}: ${err}`);
 			}
 		}
 
+		console.log(totalImages);
+
+		if (totalImages.length === 0) return alert("No images to upload");
+
+		await updateDoc(doc(db, "events", id), {
+			images: totalImages,
+		});
+
 		setIsUploading(false);
 		setUploadProgress(0);
 		setSelectedImages([]);
 		setImageBlobs([]);
+		alert("Upload Successful");
+		window.location.reload();
 	};
 
 	const removeImage = (index: number) => {
@@ -186,7 +174,9 @@ const EventView = () => {
 
 			<Card>
 				<CardHeader>
-					<CardTitle>{event?.title}</CardTitle>
+					<CardTitle className='font-semibold text-lg'>
+						{event?.title}
+					</CardTitle>
 					<CardDescription>{event?.description}</CardDescription>
 				</CardHeader>
 				<CardContent>
@@ -198,20 +188,12 @@ const EventView = () => {
 									images uploaded
 								</p>
 								<div className='flex gap-2'>
-									<Button
-										disabled={isUploading}
-										onClick={handlePhotoInputClick}>
-										<Upload className='h-4 w-4 mr-2' />
-										Select Images
-									</Button>
-									{selectedImages.length > 0 && (
+									{selectedImages.length !== MAX_IMAGES && (
 										<Button
-											onClick={handleUpload}
 											disabled={isUploading}
-											variant='default'>
-											{isUploading
-												? "Uploading..."
-												: "Upload Selected"}
+											onClick={handlePhotoInputClick}>
+											<Upload className='h-4 w-4 mr-2' />
+											Select Images
 										</Button>
 									)}
 								</div>
@@ -236,11 +218,11 @@ const EventView = () => {
 					)}
 
 					{imageBlobs.length > 0 && (
-						<div className='flex flex-wrap gap-4 mb-8 p-4 border rounded-lg bg-muted/50'>
+						<div className='flex flex-wrap justify-around gap-4 mb-8 p-4 border rounded-lg bg-muted/50'>
 							{imageBlobs.map((blob, index) => (
 								<div
 									key={index}
-									className='relative w-24 h-24 group'>
+									className='relative w-24 h-24 group mb-5'>
 									<img
 										src={blob.url}
 										alt={`Preview ${index + 1}`}
@@ -255,11 +237,49 @@ const EventView = () => {
 									</Button>
 								</div>
 							))}
+							{selectedImages.length > 0 && (
+								<Button
+									onClick={handleUpload}
+									disabled={isUploading}
+									variant='default'>
+									{isUploading
+										? "Uploading..."
+										: "Upload Selected"}
+								</Button>
+							)}
 						</div>
 					)}
 
 					{event?.images.length ? (
-						<ImageGallery />
+						<div className='grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4'>
+							{event?.images.map((image, index) => (
+								<Card
+									key={index}
+									className='group relative overflow-hidden'>
+									<CardContent className='p-0'>
+										<img
+											src={image.url}
+											alt='Event'
+											className='w-full aspect-square object-cover cursor-pointer transition-transform group-hover:scale-105'
+											onClick={() =>
+												setSelectedImage(image.url)
+											}
+										/>
+										{currentUser?.id === event.user_id && (
+											<Button
+												variant='destructive'
+												size='icon'
+												className='absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity'
+												onClick={() =>
+													handleImageDelete(image)
+												}>
+												<Trash2 className='h-4 w-4' />
+											</Button>
+										)}
+									</CardContent>
+								</Card>
+							))}
+						</div>
 					) : (
 						<div className='text-center py-12'>
 							<ImageIcon className='mx-auto h-12 w-12 text-muted-foreground' />
@@ -270,25 +290,107 @@ const EventView = () => {
 					)}
 				</CardContent>
 			</Card>
+			<ImagePreviewDialog
+				selectedImage={selectedImage}
+				onClose={() => setSelectedImage(null)}
+				eventId={id || ""}
+			/>
+		</main>
+	);
+};
 
-			<Dialog
-				open={!!selectedImage}
-				onOpenChange={() => setSelectedImage(null)}>
-				<DialogContent className='max-w-4xl'>
-					<DialogHeader>
-						<DialogTitle>Image Preview</DialogTitle>
-					</DialogHeader>
-					{selectedImage && (
+function ImagePreviewDialog({
+	selectedImage,
+	onClose,
+	eventId,
+}: {
+	selectedImage: string | null;
+	onClose: () => void;
+	eventId: string;
+}) {
+	const [email, setEmail] = useState("");
+	const [isSubmitting, setIsSubmitting] = useState(false);
+	const [emailError, setEmailError] = useState<string | null>(null);
+
+	const handleDownload = async () => {
+		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+		if (!emailRegex.test(email)) {
+			setEmailError("Please enter a valid email");
+			return;
+		}
+
+		setIsSubmitting(true);
+		setEmailError(null);
+
+		try {
+			await updateDoc(doc(db, "events", eventId), {
+				downloads: arrayUnion({
+					user_email: email,
+					download_date: new Date(),
+				} as DownloadRecord),
+			});
+
+			const response = await fetch(`${selectedImage}`);
+			const blob = await response.blob();
+			const url = window.URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = `image-${Date.now()}.jpg`;
+			document.body.appendChild(a);
+			a.click();
+			window.URL.revokeObjectURL(url);
+			document.body.removeChild(a);
+		} catch (error) {
+			setEmailError("Failed to process download");
+			console.error(error);
+		} finally {
+			setIsSubmitting(false);
+		}
+	};
+
+	return (
+		<Dialog
+			open={!!selectedImage}
+			onOpenChange={onClose}>
+			<DialogContent className='max-w-xl rounded-lg w-full'>
+				<DialogHeader>
+					<DialogTitle>Image Preview</DialogTitle>
+				</DialogHeader>
+				{selectedImage && (
+					<>
 						<img
 							src={selectedImage}
 							alt='Preview'
 							className='w-full h-auto rounded-lg'
 						/>
-					)}
-				</DialogContent>
-			</Dialog>
-		</main>
+						<div className='mt-4 space-y-4'>
+							<Input
+								type='email'
+								placeholder='Enter your email to download'
+								value={email}
+								onChange={(e) => setEmail(e.target.value)}
+								className={emailError ? "border-red-500" : ""}
+							/>
+							{emailError && (
+								<p className='text-sm text-red-500'>
+									{emailError}
+								</p>
+							)}
+							<Button
+								onClick={handleDownload}
+								disabled={isSubmitting}
+								className='w-full'>
+								<DownloadCloud className='h-4 w-4 mr-2' />
+								{isSubmitting
+									? "Processing..."
+									: "Download Image"}
+							</Button>
+						</div>
+					</>
+				)}
+			</DialogContent>
+		</Dialog>
 	);
-};
+}
 
 export default EventView;

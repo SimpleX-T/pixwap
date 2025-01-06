@@ -37,17 +37,12 @@ const Dashboard: React.FC = () => {
 						(doc) => ({ id: doc.id, ...doc.data() } as Event)
 					);
 					setEvents(eventsData);
-
-					const downloadsQuery = query(
-						collection(db, "downloads"),
-						where(
-							"event_id",
-							"in",
-							eventsData.map((e) => e.id)
+					setTotalDownloads(
+						eventsData.reduce(
+							(acc, val) => val.downloads.length + acc,
+							0
 						)
 					);
-					const downloadsSnapshot = await getDocs(downloadsQuery);
-					setTotalDownloads(downloadsSnapshot.size);
 				}
 			} catch (error) {
 				console.error("Error fetching events:", error);
